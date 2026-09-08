@@ -1,0 +1,28 @@
+{
+  "members": [
+    {
+      "name": "esm2_mlp",
+      "features": "../data/query/esm2.npy",
+      "metadata": "../data/query/esm2.metadata.tsv",
+      "checkpoint": "../models/esm2_mlp.pt",
+      "config": "../models/esm2_config.json",
+      "scaler": "../models/esm2_scaler.npz"
+    },
+    {
+      "name": "saprot_prostt5_mlp",
+      "features": "../data/query/saprot_prostt5.npy",
+      "metadata": "../data/query/saprot_prostt5.metadata.tsv",
+      "checkpoint": "../models/saprot_prostt5_mlp.pt",
+      "config": "../models/saprot_prostt5_config.json",
+      "scaler": "../models/saprot_prostt5_scaler.npz"
+    },
+    {
+      "name": "protbert_mlp",
+      "features": "../data/query/protbert.npy",
+      "metadata": "../data/query/protbert.metadata.tsv",
+      "checkpoint": "../models/protbert_mlp.pt",
+      "config": "../models/protbert_config.json",
+      "scaler": "../models/protbert_scaler.npz"
+    }
+  ]
+}
