@@ -1,0 +1,39 @@
+{
+  "esm2": {
+    "repo_id": "facebook/esm2_t33_650M_UR50D",
+    "revision": "08e4846e537177426273712802403f7ba8261b6c",
+    "directory": "esm2_t33_650M_UR50D",
+    "weight_file": "pytorch_model.bin",
+    "weight_size_bytes": 2609621831,
+    "weight_sha256": "c874668852c7275a159e2c7ceb6069671d7b1ba2c7b52f59600b34ce0f721008",
+    "embedding_dimension": 1280,
+    "pooling": "residue_mean_without_special_tokens"
+  },
+  "protbert": {
+    "repo_id": "Rostlab/prot_bert",
+    "revision": "7a894481acdc12202f0a415dd567f6cfdb698908",
+    "directory": "prot_bert",
+    "weight_file": "pytorch_model.bin",
+    "weight_size_bytes": 1684058277,
+    "weight_sha256": "6ea3edd26cfefc3111176100ee2a027ed510f9c86b63e5b53a2a050b59f2af9d",
+    "embedding_dimension": 1024,
+    "pooling": "residue_mean_without_special_tokens"
+  },
+  "saprot": {
+    "repo_id": "westlake-repl/SaProt_650M_AF2",
+    "revision": "d9b9ad00ef61c0990e611b2b43f2231c7de24b38",
+    "directory": "SaProt_650M_AF2",
+    "weight_file": "pytorch_model.bin",
+    "weight_size_bytes": 2606517773,
+    "weight_sha256": "513c39088804b74309d961174d5fc7aeabfb9b79d2814cdc7e465d4fe4b9f216",
+    "embedding_dimension": 1280,
+    "pooling": "residue_mean_without_special_tokens"
+  },
+  "prostt5_foldseek": {
+    "download_command": "foldseek databases ProstT5 <output> <tmp>",
+    "directory": "ProstT5_foldseek",
+    "weight_file": "prostt5-f16.gguf",
+    "weight_size_bytes": 2417458816,
+    "weight_sha256": "b072042c7d5b2c7425ed6cfdbc85d2cbd62b42470d0fc1afc7c2524c1bb70207"
+  }
+}

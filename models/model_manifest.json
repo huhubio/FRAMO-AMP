@@ -1,0 +1,45 @@
+{
+  "ensemble": "ESM2-MLP + SaProt-ProstT5-MLP + ProtBERT-MLP",
+  "decision_rule": "positive when at least two of three members are positive",
+  "members": [
+    {
+      "name": "esm2_mlp",
+      "input_dimension": 1280,
+      "hidden_layers": [512],
+      "dropout": 0.2,
+      "output_dimension": 1,
+      "trainable_parameters": 656385,
+      "threshold": 0.5,
+      "checkpoint": "esm2_mlp.pt",
+      "checkpoint_sha256": "407acc55b9f9adde25b90a04df296e2bbdcde9465d65c2d5e47342ff7edf2c10",
+      "scaler": "esm2_scaler.npz",
+      "scaler_sha256": "19333d5fb7aa981b169ea099428627cebeec9df66722896cb9c502273c2b2de7"
+    },
+    {
+      "name": "saprot_prostt5_mlp",
+      "input_dimension": 1280,
+      "hidden_layers": [512, 256, 128],
+      "dropout": 0.35,
+      "output_dimension": 1,
+      "trainable_parameters": 820225,
+      "threshold": 0.7950000166893005,
+      "checkpoint": "saprot_prostt5_mlp.pt",
+      "checkpoint_sha256": "64ef16fae6986430f3960505b6f47305a8ef42eda0866d5793c9136b7e93dece",
+      "scaler": "saprot_prostt5_scaler.npz",
+      "scaler_sha256": "c19290474f6146f9e3947588dd85990be3c3aa3b1525e9754e13ab2760a11217"
+    },
+    {
+      "name": "protbert_mlp",
+      "input_dimension": 1024,
+      "hidden_layers": [512, 256, 128],
+      "dropout": 0.5,
+      "output_dimension": 1,
+      "trainable_parameters": 689153,
+      "threshold": 0.8500000238418579,
+      "checkpoint": "protbert_mlp.pt",
+      "checkpoint_sha256": "af4d405f39343625f434670cc92c8d88326008e19aee6e5d6e400de157ef50c0",
+      "scaler": "protbert_scaler.npz",
+      "scaler_sha256": "e88363ba86a7d4819099adc3c7b57a2784410e4a7ffa99be1f908d66b7945d0f"
+    }
+  ]
+}

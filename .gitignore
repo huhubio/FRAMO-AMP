@@ -11,3 +11,11 @@ predictions.tsv
 # Feature matrices are inputs and can exceed GitHub's file-size limit.
 data/
 *.npy
+models/backbones/
+output/
+framo_amp_output/
+
+# Never commit multi-gigabyte frozen backbone weights to normal Git.
+*.gguf
+pytorch_model.bin
+*.safetensors
