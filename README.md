@@ -2,7 +2,11 @@
 
 ## ESM2 / SaProt-ProstT5 / ProtBERT 3-MLP Ensemble
 
-这是一个从蛋白质 FASTA 到抗菌肽（AMP）预测结果的完整流程：
+这是一个包含候选肽生成和三模型筛选的完整 AMP 发现流程：
+
+1. 使用仓库内置的 ProGen 模型生成候选 AMP 序列；
+2. 从 FASTA 生成 ESM2、ProtBERT、SaProt-ProstT5 三套特征；
+3. 使用三个 MLP 进行预测并执行 2/3 多数投票。
 
 ```text
 FASTA
@@ -11,30 +15,71 @@ FASTA
  └─ ProstT5 3Di → SaProt mean embedding ─ SaProt-MLP ─────┘
 ```
 
-仓库同时支持两种用法：
+仓库支持三种用法：
 
+- 使用本地 ProGen 权重直接生成候选 AMP，或通过 LoRA 微调生成模型；
 - 从 FASTA 开始，自动生成三套 `.npy` 特征并完成集成预测；
 - 输入已经提取好的三套 `.npy`，直接运行三个 MLP 和多数投票。
 
-三个训练完成的 MLP checkpoint、训练集 scaler、模型配置、阈值和 SHA-256 校验值均已包含在 `models/` 中。
+ProGen 生成模型以两个 Git LFS `safetensors` 分片保存在 `AMP_generation/`。三个训练完成的 MLP checkpoint、训练集 scaler、模型配置、阈值和 SHA-256 校验值均包含在 `models/` 中。
 
 ## 安装
 
 需要 Python 3.10+、CUDA 版 PyTorch 和 NVIDIA GPU。SaProt 的 3Di 生成还需要支持 ProstT5 的 Foldseek 10 或更高版本。
 
 ```bash
+git lfs install
 git clone https://github.com/huhubio/FRAMO-AMP-FRAMework-for-overall-AMP-discovery-.git
 cd FRAMO-AMP-FRAMework-for-overall-AMP-discovery-
 python -m venv .venv
 source .venv/bin/activate
-pip install -e '.[extract]'
+pip install -e '.[extract,generation]'
 ```
+
+如果仓库已克隆但 `AMP_generation/*.safetensors` 只是很小的 LFS 指针文件，请执行 `git lfs pull`。
 
 Foldseek 请参考其官方安装方式；安装后确认：
 
 ```bash
 foldseek version
 ```
+
+## AMP 候选序列生成
+
+生成 100 条长度为 8–25 aa 的候选肽：
+
+```bash
+python scripts/generate_amp.py \
+  --num-return-sequences 100 \
+  --min-seq-length 8 \
+  --max-seq-length 25 \
+  --batch-size 16 \
+  --out results/generated_amp.fasta
+```
+
+输出包括 FASTA 和记录全部采样参数及序列的同名 JSON 文件。可用 `--seed`、`--temperature-min`、`--temperature-max`、`--top-k`、`--top-p` 和 `--repetition-penalty` 控制采样。
+
+多 GPU 生成：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 scripts/generate_amp.py \
+  --num-return-sequences 1000 \
+  --out results/generated_amp.fasta
+```
+
+使用自己的 AMP FASTA 进行 LoRA 微调：
+
+```bash
+torchrun --nproc_per_node=4 scripts/finetune_generation_lora.py \
+  --fasta data/my_amp_dataset.fasta \
+  --dataset-name my_amp_dataset \
+  --save-dir lora_runs/my_amp_dataset \
+  --num-train-epochs 5 \
+  --per-device-train-batch-size 8 \
+  --bf16
+```
+
+生成模型的文件组成及更多说明见 `AMP_generation/README.md`。
 
 ## 一条命令：FASTA 到集成结果
 

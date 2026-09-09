@@ -1,0 +1,29 @@
+{
+  "model_family": "ProGen",
+  "task": "AMP candidate sequence generation",
+  "architecture": "ProGenForCausalLM",
+  "parameters": 764803616,
+  "tensor_count": 221,
+  "dtype": "float32",
+  "layers": 27,
+  "embedding_dimension": 1536,
+  "attention_heads": 16,
+  "context_positions": 2048,
+  "vocabulary_size": 32,
+  "weight_format": "sharded safetensors",
+  "total_weight_bytes": 3059237849,
+  "source_repository": "git@github.com:huhubio/FRAMO-AMP.git",
+  "source_commit": "cf61c8cbeb9b915907b24aa71a63c027089b8c8a",
+  "weight_shards": [
+    {
+      "file": "model-00001-of-00002.safetensors",
+      "bytes": 1775089136,
+      "sha256": "ffbfd4ef691e32da177ead36e31dc2296b9e46ba3c814389d23c523f43193369"
+    },
+    {
+      "file": "model-00002-of-00002.safetensors",
+      "bytes": 1284148713,
+      "sha256": "ef2f8b091f5aee37c8b715f520cb17a573f457a636d97fb23314589375048189"
+    }
+  ]
+}

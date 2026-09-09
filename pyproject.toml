@@ -21,6 +21,13 @@ extract = [
   "huggingface-hub>=0.23,<1",
   "sentencepiece>=0.2",
 ]
+generation = [
+  "transformers==4.42.3",
+  "accelerate>=0.26",
+  "peft>=0.10",
+  "safetensors>=0.4",
+  "PyYAML>=6.0",
+]
 
 [project.scripts]
 amp-ensemble = "amp_ensemble.cli:main"

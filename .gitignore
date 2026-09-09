@@ -9,7 +9,7 @@ build/
 predictions.tsv
 
 # Feature matrices are inputs and can exceed GitHub's file-size limit.
-data/
+/data/
 *.npy
 models/backbones/
 output/
@@ -19,3 +19,8 @@ framo_amp_output/
 *.gguf
 pytorch_model.bin
 *.safetensors
+!AMP_generation/*.safetensors
+
+# Generated sequences and optional LoRA runs.
+results/
+lora_runs/

@@ -1,0 +1,33 @@
+generation:
+  model_dir: ./AMP_generation
+  device: cuda
+  local_files_only: true
+  num_return_sequences: 1000
+  min_seq_length: 8
+  max_seq_length: 25
+  batch_size: 32
+  seed: 42
+  temperature_min: 0.8
+  temperature_max: 1.0
+  top_k: 30
+  top_p: 0.9
+  repetition_penalty: 1.1
+  max_attempts_factor: 5
+
+generation_lora:
+  max_length: 256
+  train_ratio: 0.95
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  lora_target_modules: qkv_proj,out_proj
+  lora_bias: none
+  num_train_epochs: 5
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 8
+  gradient_accumulation_steps: 1
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  warmup_ratio: 0.03
+  logging_steps: 10
+  save_total_limit: null
