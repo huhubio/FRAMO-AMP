@@ -1,4 +1,6 @@
-# AMP 3-MLP Ensemble
+# FRAMO-AMP: FRAMework for Overall AMP Discovery
+
+## ESM2 / SaProt-ProstT5 / ProtBERT 3-MLP Ensemble
 
 基于三种蛋白语言模型均值特征的抗菌肽（AMP）二分类集成：
 
