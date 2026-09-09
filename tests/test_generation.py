@@ -1,10 +1,16 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import torch
 
-from framo_amp.generation.progen import GenerationSettings, clean_generated_sequence, generate_batch
+from framo_amp.generation.progen import (
+    GenerationSettings,
+    _resolve_device,
+    clean_generated_sequence,
+    generate_batch,
+)
 
 
 class FakeTokenizer:
@@ -44,6 +50,18 @@ class GenerationTests(unittest.TestCase):
 
     def test_clean_generated_sequence(self) -> None:
         self.assertEqual(clean_generated_sequence("acD-e f*"), "ACDEF")
+
+    @mock.patch("framo_amp.generation.progen.torch.cuda.set_device")
+    @mock.patch("framo_amp.generation.progen.get_local_rank", return_value=2)
+    @mock.patch("framo_amp.generation.progen.get_world_size", return_value=4)
+    def test_unindexed_cuda_uses_local_rank(
+        self,
+        _world_size: mock.Mock,
+        _local_rank: mock.Mock,
+        set_device: mock.Mock,
+    ) -> None:
+        self.assertEqual(_resolve_device("cuda"), torch.device("cuda", 2))
+        set_device.assert_called_once_with(2)
 
 
 if __name__ == "__main__":

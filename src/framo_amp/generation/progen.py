@@ -68,7 +68,12 @@ def _model_device(model) -> torch.device:  # noqa: ANN001
 
 def _resolve_device(device: Optional[str]) -> torch.device:
     if device:
-        return torch.device(device)
+        resolved = torch.device(device)
+        if resolved.type == "cuda" and resolved.index is None and get_world_size() > 1:
+            local_rank = get_local_rank()
+            torch.cuda.set_device(local_rank)
+            return torch.device("cuda", local_rank)
+        return resolved
     if torch.cuda.is_available():
         local_rank = get_local_rank()
         torch.cuda.set_device(local_rank)

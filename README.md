@@ -46,26 +46,137 @@ foldseek version
 
 ## AMP 候选序列生成
 
-生成 100 条长度为 8–25 aa 的候选肽：
+### 使用哪个代码
+
+生成阶段各文件的作用如下：
+
+| 文件 | 作用 |
+|---|---|
+| `scripts/generate_amp.py` | 生成候选 AMP 的命令行入口，通常直接运行这个文件 |
+| `src/framo_amp/generation/progen.py` | 加载 ProGen、执行采样、长度过滤并写出 FASTA/JSON |
+| `AMP_generation/` | 本地 ProGen 模型代码、Tokenizer、配置和两个权重分片 |
+| `configs/default.yaml` | 默认生成参数；命令行参数会覆盖这里的设置 |
+| `scripts/finetune_generation_lora.py` | 使用自己的 AMP FASTA 对生成模型进行 LoRA 微调 |
+
+克隆仓库后，先确认 Git LFS 权重已经下载。两个权重分片应分别约为
+1.78 GB 和 1.28 GB，而不是几百字节的 LFS 指针：
 
 ```bash
-python scripts/generate_amp.py \
+git lfs install
+git lfs pull
+ls -lh AMP_generation/model-*.safetensors
+
+# 可选：校验权重和模型相关文件
+(cd AMP_generation && sha256sum -c SHA256SUMS)
+```
+
+安装生成模块所需依赖：
+
+```bash
+pip install -e '.[generation]'
+```
+
+### 单 GPU 生成
+
+下面的命令使用仓库中的 `AMP_generation/` 权重，生成 100 条长度为
+8–25 aa 的候选肽：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/generate_amp.py \
+  --model-dir AMP_generation \
   --num-return-sequences 100 \
   --min-seq-length 8 \
   --max-seq-length 25 \
   --batch-size 16 \
+  --seed 42 \
   --out results/generated_amp.fasta
 ```
 
-输出包括 FASTA 和记录全部采样参数及序列的同名 JSON 文件。可用 `--seed`、`--temperature-min`、`--temperature-max`、`--top-k`、`--top-p` 和 `--repetition-penalty` 控制采样。
+`--model-dir` 可以省略，因为默认值就是 `AMP_generation/`。如果显存不足，
+将 `--batch-size` 调小，例如改为 `8`、`4` 或 `1`。也可以使用 CPU，
+但生成会明显变慢：
 
-多 GPU 生成：
+```bash
+python scripts/generate_amp.py \
+  --device cpu \
+  --num-return-sequences 10 \
+  --batch-size 1 \
+  --out results/generated_amp_cpu.fasta
+```
+
+生成完成后会得到两个文件：
+
+```text
+results/
+├── generated_amp.fasta  # 后续特征提取和筛选直接使用这个文件
+└── generated_amp.json   # 完整采样参数和生成序列，便于复现
+```
+
+FASTA 中的序列 ID 为 `Generated_sequence_1`、`Generated_sequence_2` 等。
+程序会清理非氨基酸字符，并只保留位于 `--min-seq-length` 和
+`--max-seq-length` 之间的序列。`--num-return-sequences` 表示希望最终写出的
+有效序列总数；如果在有限尝试次数内未得到足够多的有效序列，日志会报告实际数量。
+
+### 采样参数
+
+| 参数 | 默认值 | 含义 |
+|---|---:|---|
+| `--num-return-sequences` | 1000 | 最终希望生成的候选序列总数 |
+| `--min-seq-length` / `--max-seq-length` | 8 / 25 | 保留的肽长度范围 |
+| `--batch-size` | 32 | 每个生成进程的批大小 |
+| `--seed` | 42 | 随机种子；相同环境和参数下用于复现 |
+| `--temperature-min` / `--temperature-max` | 0.8 / 1.0 | 每批采样温度范围；越高通常越多样 |
+| `--top-k` | 30 | 只从概率最高的 K 个 token 中采样 |
+| `--top-p` | 0.9 | nucleus sampling 的累计概率阈值 |
+| `--repetition-penalty` | 1.1 | 重复惩罚，较高可减少重复模式 |
+| `--max-attempts-factor` | 5 | 为获得合格长度序列允许的最大尝试倍数 |
+
+例如，提高采样多样性：
+
+```bash
+python scripts/generate_amp.py \
+  --num-return-sequences 1000 \
+  --temperature-min 0.9 \
+  --temperature-max 1.2 \
+  --top-k 50 \
+  --top-p 0.95 \
+  --out results/generated_amp_diverse.fasta
+```
+
+### 多 GPU 生成
+
+使用 `torchrun` 启动多进程，每张 GPU 对应一个进程。下面命令在 GPU 0 和
+GPU 1 上合计生成 1000 条序列，而不是每张卡各生成 1000 条：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 scripts/generate_amp.py \
   --num-return-sequences 1000 \
+  --batch-size 16 \
   --out results/generated_amp.fasta
 ```
+
+只有 rank 0 会汇总各 GPU 的结果并写出最终 FASTA 和 JSON。
+
+### 生成后直接运行三模型筛选
+
+生成得到的 FASTA 可以直接作为端到端筛选脚本的输入：
+
+```bash
+scripts/run_end_to_end.sh \
+  results/generated_amp.fasta \
+  results/generated_amp_screening
+```
+
+最终集成预测位于：
+
+```text
+results/generated_amp_screening/predictions.tsv
+```
+
+该步骤会依次生成 ESM2、ProtBERT、SaProt-ProstT5 特征，再用三个 MLP
+执行预测和 2/3 多数投票。
+
+### 使用 LoRA 微调后的模型生成
 
 使用自己的 AMP FASTA 进行 LoRA 微调：
 
@@ -79,7 +190,33 @@ torchrun --nproc_per_node=4 scripts/finetune_generation_lora.py \
   --bf16
 ```
 
-生成模型的文件组成及更多说明见 `AMP_generation/README.md`。
+最终 LoRA adapter 默认保存在 `lora_runs/my_amp_dataset/final/`。加载该
+adapter 生成候选序列：
+
+```bash
+python scripts/generate_amp.py \
+  --model-dir AMP_generation \
+  --adapter-dir lora_runs/my_amp_dataset/final \
+  --num-return-sequences 1000 \
+  --out results/generated_amp_lora.fasta
+```
+
+也可以在微调结束后立即生成：
+
+```bash
+torchrun --nproc_per_node=4 scripts/finetune_generation_lora.py \
+  --fasta data/my_amp_dataset.fasta \
+  --dataset-name my_amp_dataset \
+  --save-dir lora_runs/my_amp_dataset \
+  --num-train-epochs 5 \
+  --per-device-train-batch-size 8 \
+  --bf16 \
+  --generate-after-train \
+  --generation-out results/generated_after_lora.fasta \
+  --num-return-sequences 1000
+```
+
+生成模型内部文件、参数量、来源和校验方式见 `AMP_generation/README.md`。
 
 ## 一条命令：FASTA 到集成结果
 
