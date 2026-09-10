@@ -218,6 +218,100 @@ torchrun --nproc_per_node=4 scripts/finetune_generation_lora.py \
 
 生成模型内部文件、参数量、来源和校验方式见 `AMP_generation/README.md`。
 
+## ExpFrame 实验候选优先级筛选
+
+三模型集成得到高置信 AMP 后，可以运行 `scripts/expframe_filter.py` 将候选
+按照可解释证据划分为三类。方法说明和原始流程图分别见 `Expframe.md` 和
+`Expframe.png`。
+
+![ExpFrame workflow](Expframe.png)
+
+ExpFrame 按以下优先级为每条候选分配唯一类别：
+
+1. `sequence_similarity`：MMseqs2 命中且 E-value `< 1e-3`；
+2. `structure_similarity`：未进入第一类，但 Foldseek TM-score `> 0.5`；
+3. `divergent_generation`：前两类均未命中，但 ESM2-650M CLS embedding
+   同时接近阳性 AMP 集的 centroid 和最近邻分布；
+4. `not_retained`：没有满足上述任何证据，暂不进入实验候选集。
+
+输入的 `predictions.tsv` 必须由本仓库三模型流程生成。脚本只接收
+`ensemble_prediction=1` 且 `ensemble_score >= 2/3` 的序列，然后过滤非标准
+氨基酸并按完整序列去重。
+
+### 完整运行
+
+先用 ESMFold 分别预测候选肽和阳性参考 AMP 的结构，并将 PDB/mmCIF 文件放入
+两个目录。结构文件名应能够对应 FASTA/预测表中的 `seq_id`。安装 `mmseqs`
+和 `foldseek` 后运行：
+
+```bash
+python scripts/expframe_filter.py \
+  --predictions-tsv results/generated_amp_screening/predictions.tsv \
+  --positive-reference-fasta data/positive_amp.fasta \
+  --sequence-reference-fasta data/high_confidence_predicted_amp.fasta \
+  --run-mmseqs \
+  --mmseqs-bin mmseqs \
+  --run-foldseek \
+  --foldseek-bin foldseek \
+  --candidate-structure-dir results/esmfold/candidates \
+  --reference-structure-dir results/esmfold/positive_reference \
+  --esm2-model-dir models/backbones/esm2_t33_650M_UR50D \
+  --gpus 0 \
+  --output-dir results/expframe
+```
+
+`--sequence-reference-fasta` 对应流程图中的 AMP_P 高置信预测集；如果省略，
+序列相似性模块会使用 `--positive-reference-fasta`。`--esm2-model-dir` 会调用
+现有的 `scripts/extract_esm2_embeddings.py`，并强制使用 ExpFrame 所需的
+leading `[CLS]` pooling，而不是三模型分类阶段使用的 mean pooling。
+
+阳性参考集的 embedding 距离阈值不会使用待筛选候选进行拟合。脚本默认取
+阳性参考集自身的 reference-to-centroid 距离和 leave-one-out 最近邻距离的
+95% 分位数；候选必须同时低于两个阈值才能进入 `divergent_generation`。
+可通过 `--embedding-quantile` 修改分位数。
+
+### 复用已有 MMseqs2、Foldseek 和 embedding 结果
+
+如果相似性搜索和 CLS 特征已经算好，可以避免重复计算：
+
+```bash
+python scripts/expframe_filter.py \
+  --predictions-tsv results/generated_amp_screening/predictions.tsv \
+  --positive-reference-fasta data/positive_amp.fasta \
+  --mmseqs-results results/mmseqs_hits.tsv \
+  --foldseek-results results/foldseek_hits.tsv \
+  --candidate-embeddings results/esm2_cls/candidates.npy \
+  --candidate-metadata results/esm2_cls/candidates.metadata.tsv \
+  --reference-embeddings results/esm2_cls/positive_reference.npy \
+  --reference-metadata results/esm2_cls/positive_reference.metadata.tsv \
+  --output-dir results/expframe
+```
+
+MMseqs2 TSV 至少需要前三列 `query, target, evalue`；Foldseek TSV 至少需要
+`query, target, evalue, alntmscore`，也可以继续提供 `qtmscore, ttmscore`。
+文件可以有表头，也可以是 `easy-search` 生成的无表头格式。
+
+仅调试某一个模块时可加 `--allow-partial`，但缺失模块不会为候选提供保留证据，
+因此正式筛选建议运行完整的三个模块。
+
+### 输出
+
+```text
+results/expframe/
+├── expframe_results.tsv       # 每条候选的全部证据、阈值、类别和保留状态
+├── retained_amp.fasta         # 最终建议进入实验验证的 AMP 候选
+├── sequence_similarity.fasta  # 序列相似类
+├── structure_similarity.fasta # 结构相似类
+├── divergent_generation.fasta # 新颖但接近 AMP embedding 流形的生成类
+├── input_audit.tsv            # 非 AMP、非标准序列和重复序列的处理记录
+├── summary.tsv                # 各类别数量汇总
+└── work/                      # 清洗后的 FASTA 和自动运行模块的中间结果
+```
+
+`retained_amp.fasta` 是最终实验候选集合；`expframe_results.tsv` 应同时保留，
+用于追踪每条肽被保留的具体证据。ExpFrame 只用于候选优先级排序，不能替代
+毒性、溶血性、稳定性评估和湿实验验证。
+
 ## 一条命令：FASTA 到集成结果
 
 ```bash
