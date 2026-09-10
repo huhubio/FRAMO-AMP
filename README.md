@@ -2,7 +2,7 @@
 
 **FRAMework for Overall Antimicrobial Peptide Discovery**
 
-FRAMO-AMP 是一个面向抗菌肽（antimicrobial peptide, AMP）发现的研究软件框架，覆盖候选序列生成、蛋白语言模型特征提取、三模型集成预测，以及面向实验验证的可解释候选优先级筛选。
+FRAMO-AMP 是一个面向抗菌肽（antimicrobial peptide, AMP）发现的研究软件框架，核心功能是通过 ESM2、ProtBERT 和 SaProt-ProstT5 三个分支预测 AMP；此外还提供候选序列生成，以及面向实验验证的可解释候选优先级筛选。
 
 > 本项目用于科研候选发现。计算预测不能替代毒性、溶血性、稳定性评估及湿实验验证。
 
@@ -13,8 +13,8 @@ FRAMO-AMP 是一个面向抗菌肽（antimicrobial peptide, AMP）发现的研�
 - [系统要求](#系统要求)
 - [安装](#安装)
 - [快速开始](#快速开始)
-- [生成候选 AMP](#生成候选-amp)
 - [三模型集成预测](#三模型集成预测)
+- [生成候选 AMP](#生成候选-amp)
 - [ExpFrame 候选优先级筛选](#expframe-候选优先级筛选)
 - [输入与输出](#输入与输出)
 - [模型与可复现性](#模型与可复现性)
@@ -28,17 +28,17 @@ FRAMO-AMP 是一个面向抗菌肽（antimicrobial peptide, AMP）发现的研�
 
 | 模块 | 功能 | 主要入口 |
 |---|---|---|
-| AMP-G | 使用仓库内置的 ProGen 模型生成候选肽 | `scripts/generate_amp.py` |
 | AMP-P | 提取 ESM2、ProtBERT、SaProt-ProstT5 特征并进行 3-MLP 集成预测 | `scripts/run_end_to_end.sh` |
 | NPY inference | 对已提取且对齐的三套特征直接运行集成模型 | `amp-ensemble` |
-| ExpFrame | 用序列、结构和 embedding 证据筛选实验候选 | `scripts/expframe_filter.py` |
+| AMP-G | 使用仓库内置的 ProGen 模型生成候选肽 | `scripts/generate_amp.py` |
 | LoRA | 使用自有 AMP FASTA 微调生成模型 | `scripts/finetune_generation_lora.py` |
+| ExpFrame | 用序列、结构和 embedding 证据筛选实验候选 | `scripts/expframe_filter.py` |
 
 项目包含以下可直接使用的训练产物：
 
-- ProGen 生成模型：两个 Git LFS `safetensors` 分片，共约 3.06 GB；
 - 三个训练完成的 MLP checkpoint；
 - 与每个 MLP 匹配的训练集 scaler、模型配置及决策阈值；
+- ProGen 生成模型：两个 Git LFS `safetensors` 分片，共约 3.06 GB；
 - 所有已提交模型文件的 SHA-256 校验信息。
 
 ESM2、ProtBERT、SaProt 和 ProstT5 等上游特征模型不会提交到普通 Git 历史中。下载脚本会获取固定版本并校验文件。
@@ -46,19 +46,19 @@ ESM2、ProtBERT、SaProt 和 ProstT5 等上游特征模型不会提交到普通 
 ## 工作流程
 
 ```text
-                                  ┌─ ESM2 mean embedding ───────── ESM2-MLP ───────┐
-ProGen generation ─┐              ├─ ProtBERT mean embedding ───── ProtBERT-MLP ───┼─ 2/3 vote
-                   ├─ FASTA ──────┤                                                     │
-Existing peptides ─┘              └─ ProstT5 3Di + SaProt mean ── SaProt-MLP ─────┘
-                                                                                       │
-                                                                                       ▼
-                                                                               predictions.tsv
-                                                                                       │
-                                                                                       ▼
-                                  MMseqs2 sequence + Foldseek structure + ESM2 CLS ExpFrame
-                                                                                       │
-                                                                                       ▼
-                                                                               retained_amp.fasta
+Input FASTA ─┬─ ESM2 mean embedding ───────── ESM2-MLP ───────┐
+             ├─ ProtBERT mean embedding ───── ProtBERT-MLP ───┼─ 2/3 vote
+             └─ ProstT5 3Di + SaProt mean ── SaProt-MLP ─────┘
+                                                                │
+                                                                ▼
+                                                        predictions.tsv
+                                                                │
+ProGen generation ── generated FASTA ── AMP-P prediction ───────┤
+                                                                ▼
+                         MMseqs2 sequence + Foldseek structure + ESM2 CLS ExpFrame
+                                                                │
+                                                                ▼
+                                                        retained_amp.fasta
 ```
 
 AMP-P 中的三个分支分别使用自己的训练集标准化参数和交叉验证阈值。最终结果默认采用 2/3 多数投票。
@@ -77,9 +77,9 @@ AMP-P 中的三个分支分别使用自己的训练集标准化参数和交叉�
 | 工作内容 | 要求 |
 |---|---|
 | 已有 NPY 的 MLP 推理 | CPU 或 CUDA GPU |
-| ProGen 生成 | 推荐 NVIDIA GPU；CPU 可运行但较慢 |
 | 三种特征的端到端提取 | NVIDIA GPU、CUDA 版 PyTorch |
 | SaProt-ProstT5 分支 | Foldseek 10 或更高版本 |
+| ProGen 生成 | 推荐 NVIDIA GPU；CPU 可运行但较慢 |
 | ExpFrame 序列分支 | MMseqs2 |
 | ExpFrame 结构分支 | ESMFold 预测结构及 Foldseek |
 
@@ -161,85 +161,6 @@ scripts/run_end_to_end.sh \
 ```
 
 生成序列保存在 `results/generated_amp.fasta`，集成预测保存在 `results/generated_amp_screening/predictions.tsv`。
-
-## 生成候选 AMP
-
-生成入口为 `scripts/generate_amp.py`，核心实现位于 `src/framo_amp/generation/progen.py`，本地模型位于 `AMP_generation/`。默认参数来自 `configs/default.yaml`，命令行参数优先级更高。
-
-### 单 GPU
-
-```bash
-CUDA_VISIBLE_DEVICES=0 python scripts/generate_amp.py \
-  --model-dir AMP_generation \
-  --num-return-sequences 1000 \
-  --min-seq-length 8 \
-  --max-seq-length 25 \
-  --batch-size 16 \
-  --seed 42 \
-  --out results/generated_amp.fasta
-```
-
-如果显存不足，请依次将 `--batch-size` 调整为 `8`、`4` 或 `1`。
-
-### 多 GPU
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 scripts/generate_amp.py \
-  --num-return-sequences 5000 \
-  --batch-size 16 \
-  --out results/generated_amp.fasta
-```
-
-`--num-return-sequences` 是所有 GPU 合计的目标数量。各 rank 生成互不重叠的子集，只有 rank 0 汇总并写出结果。
-
-### CPU
-
-```bash
-python scripts/generate_amp.py \
-  --device cpu \
-  --num-return-sequences 10 \
-  --batch-size 1 \
-  --out results/generated_amp_cpu.fasta
-```
-
-### 主要生成参数
-
-| 参数 | 默认值 | 说明 |
-|---|---:|---|
-| `--num-return-sequences` | 1000 | 目标有效序列数 |
-| `--min-seq-length` / `--max-seq-length` | 8 / 25 | 接受的序列长度范围 |
-| `--batch-size` | 32 | 每个进程的生成批大小 |
-| `--seed` | 42 | 随机种子 |
-| `--temperature-min` / `--temperature-max` | 0.8 / 1.0 | 采样温度范围 |
-| `--top-k` | 30 | top-k sampling |
-| `--top-p` | 0.9 | nucleus sampling 阈值 |
-| `--repetition-penalty` | 1.1 | 重复惩罚 |
-| `--max-attempts-factor` | 5 | 长度过滤失败时的最大尝试倍数 |
-
-程序同时写出 FASTA 和同名 JSON。JSON 保存全部采样参数及生成序列，用于复现和审计。
-
-### LoRA 微调
-
-```bash
-torchrun --nproc_per_node=4 scripts/finetune_generation_lora.py \
-  --fasta data/my_amp_dataset.fasta \
-  --dataset-name my_amp_dataset \
-  --save-dir lora_runs/my_amp_dataset \
-  --num-train-epochs 5 \
-  --per-device-train-batch-size 8 \
-  --bf16
-```
-
-最终 adapter 保存在 `lora_runs/my_amp_dataset/final/`。使用该 adapter 生成：
-
-```bash
-python scripts/generate_amp.py \
-  --adapter-dir lora_runs/my_amp_dataset/final \
-  --num-return-sequences 1000 \
-  --out results/generated_amp_lora.fasta
-```
-
-更多生成模型信息见 [AMP_generation/README.md](AMP_generation/README.md)。
 
 ## 三模型集成预测
 
@@ -341,6 +262,85 @@ python scripts/extract_protein_lm_embeddings.py input.fasta \
 ```
 
 每个提取器都会生成 `.npy` 和对应的 `.metadata.tsv`。metadata 记录特征行号、序列 ID、清洗后序列、截断数量和来源 FASTA。
+
+## 生成候选 AMP
+
+生成入口为 `scripts/generate_amp.py`，核心实现位于 `src/framo_amp/generation/progen.py`，本地模型位于 `AMP_generation/`。默认参数来自 `configs/default.yaml`，命令行参数优先级更高。
+
+### 单 GPU
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/generate_amp.py \
+  --model-dir AMP_generation \
+  --num-return-sequences 1000 \
+  --min-seq-length 8 \
+  --max-seq-length 25 \
+  --batch-size 16 \
+  --seed 42 \
+  --out results/generated_amp.fasta
+```
+
+如果显存不足，请依次将 `--batch-size` 调整为 `8`、`4` 或 `1`。
+
+### 多 GPU
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 scripts/generate_amp.py \
+  --num-return-sequences 5000 \
+  --batch-size 16 \
+  --out results/generated_amp.fasta
+```
+
+`--num-return-sequences` 是所有 GPU 合计的目标数量。各 rank 生成互不重叠的子集，只有 rank 0 汇总并写出结果。
+
+### CPU
+
+```bash
+python scripts/generate_amp.py \
+  --device cpu \
+  --num-return-sequences 10 \
+  --batch-size 1 \
+  --out results/generated_amp_cpu.fasta
+```
+
+### 主要生成参数
+
+| 参数 | 默认值 | 说明 |
+|---|---:|---|
+| `--num-return-sequences` | 1000 | 目标有效序列数 |
+| `--min-seq-length` / `--max-seq-length` | 8 / 25 | 接受的序列长度范围 |
+| `--batch-size` | 32 | 每个进程的生成批大小 |
+| `--seed` | 42 | 随机种子 |
+| `--temperature-min` / `--temperature-max` | 0.8 / 1.0 | 采样温度范围 |
+| `--top-k` | 30 | top-k sampling |
+| `--top-p` | 0.9 | nucleus sampling 阈值 |
+| `--repetition-penalty` | 1.1 | 重复惩罚 |
+| `--max-attempts-factor` | 5 | 长度过滤失败时的最大尝试倍数 |
+
+程序同时写出 FASTA 和同名 JSON。JSON 保存全部采样参数及生成序列，用于复现和审计。
+
+### LoRA 微调
+
+```bash
+torchrun --nproc_per_node=4 scripts/finetune_generation_lora.py \
+  --fasta data/my_amp_dataset.fasta \
+  --dataset-name my_amp_dataset \
+  --save-dir lora_runs/my_amp_dataset \
+  --num-train-epochs 5 \
+  --per-device-train-batch-size 8 \
+  --bf16
+```
+
+最终 adapter 保存在 `lora_runs/my_amp_dataset/final/`。使用该 adapter 生成：
+
+```bash
+python scripts/generate_amp.py \
+  --adapter-dir lora_runs/my_amp_dataset/final \
+  --num-return-sequences 1000 \
+  --out results/generated_amp_lora.fasta
+```
+
+更多生成模型信息见 [AMP_generation/README.md](AMP_generation/README.md)。
 
 ## ExpFrame 候选优先级筛选
 
