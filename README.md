@@ -1,90 +1,177 @@
-# FRAMO-AMP: FRAMework for Overall AMP Discovery
+# FRAMO-AMP
 
-## ESM2 / SaProt-ProstT5 / ProtBERT 3-MLP Ensemble
+**FRAMework for Overall Antimicrobial Peptide Discovery**
 
-这是一个包含候选肽生成和三模型筛选的完整 AMP 发现流程：
+FRAMO-AMP 是一个面向抗菌肽（antimicrobial peptide, AMP）发现的研究软件框架，覆盖候选序列生成、蛋白语言模型特征提取、三模型集成预测，以及面向实验验证的可解释候选优先级筛选。
 
-1. 使用仓库内置的 ProGen 模型生成候选 AMP 序列；
-2. 从 FASTA 生成 ESM2、ProtBERT、SaProt-ProstT5 三套特征；
-3. 使用三个 MLP 进行预测并执行 2/3 多数投票。
+> 本项目用于科研候选发现。计算预测不能替代毒性、溶血性、稳定性评估及湿实验验证。
+
+## 目录
+
+- [功能概览](#功能概览)
+- [工作流程](#工作流程)
+- [系统要求](#系统要求)
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [生成候选 AMP](#生成候选-amp)
+- [三模型集成预测](#三模型集成预测)
+- [ExpFrame 候选优先级筛选](#expframe-候选优先级筛选)
+- [输入与输出](#输入与输出)
+- [模型与可复现性](#模型与可复现性)
+- [项目结构](#项目结构)
+- [测试](#测试)
+- [常见问题](#常见问题)
+- [限制与免责声明](#限制与免责声明)
+- [许可证](#许可证)
+
+## 功能概览
+
+| 模块 | 功能 | 主要入口 |
+|---|---|---|
+| AMP-G | 使用仓库内置的 ProGen 模型生成候选肽 | `scripts/generate_amp.py` |
+| AMP-P | 提取 ESM2、ProtBERT、SaProt-ProstT5 特征并进行 3-MLP 集成预测 | `scripts/run_end_to_end.sh` |
+| NPY inference | 对已提取且对齐的三套特征直接运行集成模型 | `amp-ensemble` |
+| ExpFrame | 用序列、结构和 embedding 证据筛选实验候选 | `scripts/expframe_filter.py` |
+| LoRA | 使用自有 AMP FASTA 微调生成模型 | `scripts/finetune_generation_lora.py` |
+
+项目包含以下可直接使用的训练产物：
+
+- ProGen 生成模型：两个 Git LFS `safetensors` 分片，共约 3.06 GB；
+- 三个训练完成的 MLP checkpoint；
+- 与每个 MLP 匹配的训练集 scaler、模型配置及决策阈值；
+- 所有已提交模型文件的 SHA-256 校验信息。
+
+ESM2、ProtBERT、SaProt 和 ProstT5 等上游特征模型不会提交到普通 Git 历史中。下载脚本会获取固定版本并校验文件。
+
+## 工作流程
 
 ```text
-FASTA
- ├─ ESM2 mean embedding ──────────────── ESM2-MLP ───────┐
- ├─ ProtBERT mean embedding ──────────── ProtBERT-MLP ───┼─ 2/3 majority vote
- └─ ProstT5 3Di → SaProt mean embedding ─ SaProt-MLP ─────┘
+                                  ┌─ ESM2 mean embedding ───────── ESM2-MLP ───────┐
+ProGen generation ─┐              ├─ ProtBERT mean embedding ───── ProtBERT-MLP ───┼─ 2/3 vote
+                   ├─ FASTA ──────┤                                                     │
+Existing peptides ─┘              └─ ProstT5 3Di + SaProt mean ── SaProt-MLP ─────┘
+                                                                                       │
+                                                                                       ▼
+                                                                               predictions.tsv
+                                                                                       │
+                                                                                       ▼
+                                  MMseqs2 sequence + Foldseek structure + ESM2 CLS ExpFrame
+                                                                                       │
+                                                                                       ▼
+                                                                               retained_amp.fasta
 ```
 
-仓库支持三种用法：
+AMP-P 中的三个分支分别使用自己的训练集标准化参数和交叉验证阈值。最终结果默认采用 2/3 多数投票。
 
-- 使用本地 ProGen 权重直接生成候选 AMP，或通过 LoRA 微调生成模型；
-- 从 FASTA 开始，自动生成三套 `.npy` 特征并完成集成预测；
-- 输入已经提取好的三套 `.npy`，直接运行三个 MLP 和多数投票。
+## 系统要求
 
-ProGen 生成模型以两个 Git LFS `safetensors` 分片保存在 `AMP_generation/`。三个训练完成的 MLP checkpoint、训练集 scaler、模型配置、阈值和 SHA-256 校验值均包含在 `models/` 中。
+### 基础环境
+
+- Linux（推荐）；
+- Python 3.10 或更高版本；
+- Git LFS；
+- PyTorch 2.1 或更高版本。
+
+### GPU 与外部工具
+
+| 工作内容 | 要求 |
+|---|---|
+| 已有 NPY 的 MLP 推理 | CPU 或 CUDA GPU |
+| ProGen 生成 | 推荐 NVIDIA GPU；CPU 可运行但较慢 |
+| 三种特征的端到端提取 | NVIDIA GPU、CUDA 版 PyTorch |
+| SaProt-ProstT5 分支 | Foldseek 10 或更高版本 |
+| ExpFrame 序列分支 | MMseqs2 |
+| ExpFrame 结构分支 | ESMFold 预测结构及 Foldseek |
+
+完整使用生成模型和三种特征模型时，请预留约 12 GB 以上磁盘空间用于模型权重；运行输出和缓存需要额外空间。
 
 ## 安装
-
-需要 Python 3.10+、CUDA 版 PyTorch 和 NVIDIA GPU。SaProt 的 3Di 生成还需要支持 ProstT5 的 Foldseek 10 或更高版本。
 
 ```bash
 git lfs install
 git clone https://github.com/huhubio/FRAMO-AMP-FRAMework-for-overall-AMP-discovery-.git
 cd FRAMO-AMP-FRAMework-for-overall-AMP-discovery-
+
 python -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -e '.[extract,generation]'
 ```
 
-如果仓库已克隆但 `AMP_generation/*.safetensors` 只是很小的 LFS 指针文件，请执行 `git lfs pull`。
+确认生成模型权重不是 LFS 指针文件：
 
-Foldseek 请参考其官方安装方式；安装后确认：
+```bash
+git lfs pull
+ls -lh AMP_generation/model-*.safetensors
+```
+
+两个分片应分别约为 1.78 GB 和 1.28 GB。可进一步执行完整性校验：
+
+```bash
+(cd AMP_generation && sha256sum -c SHA256SUMS)
+(cd models && sha256sum -c SHA256SUMS)
+```
+
+如需端到端特征提取，请确认 Foldseek 可用：
 
 ```bash
 foldseek version
 ```
 
-## AMP 候选序列生成
+## 快速开始
 
-### 使用哪个代码
+### 1. 准备 FASTA
 
-生成阶段各文件的作用如下：
-
-| 文件 | 作用 |
-|---|---|
-| `scripts/generate_amp.py` | 生成候选 AMP 的命令行入口，通常直接运行这个文件 |
-| `src/framo_amp/generation/progen.py` | 加载 ProGen、执行采样、长度过滤并写出 FASTA/JSON |
-| `AMP_generation/` | 本地 ProGen 模型代码、Tokenizer、配置和两个权重分片 |
-| `configs/default.yaml` | 默认生成参数；命令行参数会覆盖这里的设置 |
-| `scripts/finetune_generation_lora.py` | 使用自己的 AMP FASTA 对生成模型进行 LoRA 微调 |
-
-克隆仓库后，先确认 Git LFS 权重已经下载。两个权重分片应分别约为
-1.78 GB 和 1.28 GB，而不是几百字节的 LFS 指针：
-
-```bash
-git lfs install
-git lfs pull
-ls -lh AMP_generation/model-*.safetensors
-
-# 可选：校验权重和模型相关文件
-(cd AMP_generation && sha256sum -c SHA256SUMS)
+```fasta
+>peptide_1
+KWKLFKKIEKVGQNIRDGIIKAGPAVAVVGQATQIAK
+>peptide_2
+GIGKFLHSAKKFGKAFVGEIMNS
 ```
 
-安装生成模块所需依赖：
+每条记录应使用唯一的序列 ID。保存为 `input.fasta`。
+
+### 2. 从 FASTA 完成三模型预测
 
 ```bash
-pip install -e '.[generation]'
+scripts/run_end_to_end.sh input.fasta results/example
 ```
 
-### 单 GPU 生成
+首次运行会下载并校验固定版本的 ESM2、ProtBERT、SaProt 和 Foldseek ProstT5 权重，共约 8.7 GiB。最终预测表位于：
 
-下面的命令使用仓库中的 `AMP_generation/` 权重，生成 100 条长度为
-8–25 aa 的候选肽：
+```text
+results/example/predictions.tsv
+```
+
+其中 `ensemble_prediction=1` 和 `ensemble_label=AMP` 表示多数投票预测为 AMP。
+
+### 3. 生成新序列后进行预测
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/generate_amp.py \
+  --num-return-sequences 100 \
+  --min-seq-length 8 \
+  --max-seq-length 25 \
+  --batch-size 16 \
+  --out results/generated_amp.fasta
+
+scripts/run_end_to_end.sh \
+  results/generated_amp.fasta \
+  results/generated_amp_screening
+```
+
+生成序列保存在 `results/generated_amp.fasta`，集成预测保存在 `results/generated_amp_screening/predictions.tsv`。
+
+## 生成候选 AMP
+
+生成入口为 `scripts/generate_amp.py`，核心实现位于 `src/framo_amp/generation/progen.py`，本地模型位于 `AMP_generation/`。默认参数来自 `configs/default.yaml`，命令行参数优先级更高。
+
+### 单 GPU
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python scripts/generate_amp.py \
   --model-dir AMP_generation \
-  --num-return-sequences 100 \
+  --num-return-sequences 1000 \
   --min-seq-length 8 \
   --max-seq-length 25 \
   --batch-size 16 \
@@ -92,9 +179,20 @@ CUDA_VISIBLE_DEVICES=0 python scripts/generate_amp.py \
   --out results/generated_amp.fasta
 ```
 
-`--model-dir` 可以省略，因为默认值就是 `AMP_generation/`。如果显存不足，
-将 `--batch-size` 调小，例如改为 `8`、`4` 或 `1`。也可以使用 CPU，
-但生成会明显变慢：
+如果显存不足，请依次将 `--batch-size` 调整为 `8`、`4` 或 `1`。
+
+### 多 GPU
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 scripts/generate_amp.py \
+  --num-return-sequences 5000 \
+  --batch-size 16 \
+  --out results/generated_amp.fasta
+```
+
+`--num-return-sequences` 是所有 GPU 合计的目标数量。各 rank 生成互不重叠的子集，只有 rank 0 汇总并写出结果。
+
+### CPU
 
 ```bash
 python scripts/generate_amp.py \
@@ -104,81 +202,23 @@ python scripts/generate_amp.py \
   --out results/generated_amp_cpu.fasta
 ```
 
-生成完成后会得到两个文件：
+### 主要生成参数
 
-```text
-results/
-├── generated_amp.fasta  # 后续特征提取和筛选直接使用这个文件
-└── generated_amp.json   # 完整采样参数和生成序列，便于复现
-```
-
-FASTA 中的序列 ID 为 `Generated_sequence_1`、`Generated_sequence_2` 等。
-程序会清理非氨基酸字符，并只保留位于 `--min-seq-length` 和
-`--max-seq-length` 之间的序列。`--num-return-sequences` 表示希望最终写出的
-有效序列总数；如果在有限尝试次数内未得到足够多的有效序列，日志会报告实际数量。
-
-### 采样参数
-
-| 参数 | 默认值 | 含义 |
+| 参数 | 默认值 | 说明 |
 |---|---:|---|
-| `--num-return-sequences` | 1000 | 最终希望生成的候选序列总数 |
-| `--min-seq-length` / `--max-seq-length` | 8 / 25 | 保留的肽长度范围 |
-| `--batch-size` | 32 | 每个生成进程的批大小 |
-| `--seed` | 42 | 随机种子；相同环境和参数下用于复现 |
-| `--temperature-min` / `--temperature-max` | 0.8 / 1.0 | 每批采样温度范围；越高通常越多样 |
-| `--top-k` | 30 | 只从概率最高的 K 个 token 中采样 |
-| `--top-p` | 0.9 | nucleus sampling 的累计概率阈值 |
-| `--repetition-penalty` | 1.1 | 重复惩罚，较高可减少重复模式 |
-| `--max-attempts-factor` | 5 | 为获得合格长度序列允许的最大尝试倍数 |
+| `--num-return-sequences` | 1000 | 目标有效序列数 |
+| `--min-seq-length` / `--max-seq-length` | 8 / 25 | 接受的序列长度范围 |
+| `--batch-size` | 32 | 每个进程的生成批大小 |
+| `--seed` | 42 | 随机种子 |
+| `--temperature-min` / `--temperature-max` | 0.8 / 1.0 | 采样温度范围 |
+| `--top-k` | 30 | top-k sampling |
+| `--top-p` | 0.9 | nucleus sampling 阈值 |
+| `--repetition-penalty` | 1.1 | 重复惩罚 |
+| `--max-attempts-factor` | 5 | 长度过滤失败时的最大尝试倍数 |
 
-例如，提高采样多样性：
+程序同时写出 FASTA 和同名 JSON。JSON 保存全部采样参数及生成序列，用于复现和审计。
 
-```bash
-python scripts/generate_amp.py \
-  --num-return-sequences 1000 \
-  --temperature-min 0.9 \
-  --temperature-max 1.2 \
-  --top-k 50 \
-  --top-p 0.95 \
-  --out results/generated_amp_diverse.fasta
-```
-
-### 多 GPU 生成
-
-使用 `torchrun` 启动多进程，每张 GPU 对应一个进程。下面命令在 GPU 0 和
-GPU 1 上合计生成 1000 条序列，而不是每张卡各生成 1000 条：
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 scripts/generate_amp.py \
-  --num-return-sequences 1000 \
-  --batch-size 16 \
-  --out results/generated_amp.fasta
-```
-
-只有 rank 0 会汇总各 GPU 的结果并写出最终 FASTA 和 JSON。
-
-### 生成后直接运行三模型筛选
-
-生成得到的 FASTA 可以直接作为端到端筛选脚本的输入：
-
-```bash
-scripts/run_end_to_end.sh \
-  results/generated_amp.fasta \
-  results/generated_amp_screening
-```
-
-最终集成预测位于：
-
-```text
-results/generated_amp_screening/predictions.tsv
-```
-
-该步骤会依次生成 ESM2、ProtBERT、SaProt-ProstT5 特征，再用三个 MLP
-执行预测和 2/3 多数投票。
-
-### 使用 LoRA 微调后的模型生成
-
-使用自己的 AMP FASTA 进行 LoRA 微调：
+### LoRA 微调
 
 ```bash
 torchrun --nproc_per_node=4 scripts/finetune_generation_lora.py \
@@ -190,135 +230,26 @@ torchrun --nproc_per_node=4 scripts/finetune_generation_lora.py \
   --bf16
 ```
 
-最终 LoRA adapter 默认保存在 `lora_runs/my_amp_dataset/final/`。加载该
-adapter 生成候选序列：
+最终 adapter 保存在 `lora_runs/my_amp_dataset/final/`。使用该 adapter 生成：
 
 ```bash
 python scripts/generate_amp.py \
-  --model-dir AMP_generation \
   --adapter-dir lora_runs/my_amp_dataset/final \
   --num-return-sequences 1000 \
   --out results/generated_amp_lora.fasta
 ```
 
-也可以在微调结束后立即生成：
+更多生成模型信息见 [AMP_generation/README.md](AMP_generation/README.md)。
+
+## 三模型集成预测
+
+### 推荐：从 FASTA 端到端运行
 
 ```bash
-torchrun --nproc_per_node=4 scripts/finetune_generation_lora.py \
-  --fasta data/my_amp_dataset.fasta \
-  --dataset-name my_amp_dataset \
-  --save-dir lora_runs/my_amp_dataset \
-  --num-train-epochs 5 \
-  --per-device-train-batch-size 8 \
-  --bf16 \
-  --generate-after-train \
-  --generation-out results/generated_after_lora.fasta \
-  --num-return-sequences 1000
+scripts/run_end_to_end.sh INPUT.fasta OUTPUT_DIR
 ```
 
-生成模型内部文件、参数量、来源和校验方式见 `AMP_generation/README.md`。
-
-## ExpFrame 实验候选优先级筛选
-
-三模型集成得到高置信 AMP 后，可以运行 `scripts/expframe_filter.py` 将候选
-按照可解释证据划分为三类。方法说明和原始流程图分别见 `Expframe.md` 和
-`Expframe.png`。
-
-![ExpFrame workflow](Expframe.png)
-
-ExpFrame 按以下优先级为每条候选分配唯一类别：
-
-1. `sequence_similarity`：MMseqs2 命中且 E-value `< 1e-3`；
-2. `structure_similarity`：未进入第一类，但 Foldseek TM-score `> 0.5`；
-3. `divergent_generation`：前两类均未命中，但 ESM2-650M CLS embedding
-   同时接近阳性 AMP 集的 centroid 和最近邻分布；
-4. `not_retained`：没有满足上述任何证据，暂不进入实验候选集。
-
-输入的 `predictions.tsv` 必须由本仓库三模型流程生成。脚本只接收
-`ensemble_prediction=1` 且 `ensemble_score >= 2/3` 的序列，然后过滤非标准
-氨基酸并按完整序列去重。
-
-### 完整运行
-
-先用 ESMFold 分别预测候选肽和阳性参考 AMP 的结构，并将 PDB/mmCIF 文件放入
-两个目录。结构文件名应能够对应 FASTA/预测表中的 `seq_id`。安装 `mmseqs`
-和 `foldseek` 后运行：
-
-```bash
-python scripts/expframe_filter.py \
-  --predictions-tsv results/generated_amp_screening/predictions.tsv \
-  --positive-reference-fasta data/positive_amp.fasta \
-  --sequence-reference-fasta data/high_confidence_predicted_amp.fasta \
-  --run-mmseqs \
-  --mmseqs-bin mmseqs \
-  --run-foldseek \
-  --foldseek-bin foldseek \
-  --candidate-structure-dir results/esmfold/candidates \
-  --reference-structure-dir results/esmfold/positive_reference \
-  --esm2-model-dir models/backbones/esm2_t33_650M_UR50D \
-  --gpus 0 \
-  --output-dir results/expframe
-```
-
-`--sequence-reference-fasta` 对应流程图中的 AMP_P 高置信预测集；如果省略，
-序列相似性模块会使用 `--positive-reference-fasta`。`--esm2-model-dir` 会调用
-现有的 `scripts/extract_esm2_embeddings.py`，并强制使用 ExpFrame 所需的
-leading `[CLS]` pooling，而不是三模型分类阶段使用的 mean pooling。
-
-阳性参考集的 embedding 距离阈值不会使用待筛选候选进行拟合。脚本默认取
-阳性参考集自身的 reference-to-centroid 距离和 leave-one-out 最近邻距离的
-95% 分位数；候选必须同时低于两个阈值才能进入 `divergent_generation`。
-可通过 `--embedding-quantile` 修改分位数。
-
-### 复用已有 MMseqs2、Foldseek 和 embedding 结果
-
-如果相似性搜索和 CLS 特征已经算好，可以避免重复计算：
-
-```bash
-python scripts/expframe_filter.py \
-  --predictions-tsv results/generated_amp_screening/predictions.tsv \
-  --positive-reference-fasta data/positive_amp.fasta \
-  --mmseqs-results results/mmseqs_hits.tsv \
-  --foldseek-results results/foldseek_hits.tsv \
-  --candidate-embeddings results/esm2_cls/candidates.npy \
-  --candidate-metadata results/esm2_cls/candidates.metadata.tsv \
-  --reference-embeddings results/esm2_cls/positive_reference.npy \
-  --reference-metadata results/esm2_cls/positive_reference.metadata.tsv \
-  --output-dir results/expframe
-```
-
-MMseqs2 TSV 至少需要前三列 `query, target, evalue`；Foldseek TSV 至少需要
-`query, target, evalue, alntmscore`，也可以继续提供 `qtmscore, ttmscore`。
-文件可以有表头，也可以是 `easy-search` 生成的无表头格式。
-
-仅调试某一个模块时可加 `--allow-partial`，但缺失模块不会为候选提供保留证据，
-因此正式筛选建议运行完整的三个模块。
-
-### 输出
-
-```text
-results/expframe/
-├── expframe_results.tsv       # 每条候选的全部证据、阈值、类别和保留状态
-├── retained_amp.fasta         # 最终建议进入实验验证的 AMP 候选
-├── sequence_similarity.fasta  # 序列相似类
-├── structure_similarity.fasta # 结构相似类
-├── divergent_generation.fasta # 新颖但接近 AMP embedding 流形的生成类
-├── input_audit.tsv            # 非 AMP、非标准序列和重复序列的处理记录
-├── summary.tsv                # 各类别数量汇总
-└── work/                      # 清洗后的 FASTA 和自动运行模块的中间结果
-```
-
-`retained_amp.fasta` 是最终实验候选集合；`expframe_results.tsv` 应同时保留，
-用于追踪每条肽被保留的具体证据。ExpFrame 只用于候选优先级排序，不能替代
-毒性、溶血性、稳定性评估和湿实验验证。
-
-## 一条命令：FASTA 到集成结果
-
-```bash
-scripts/run_end_to_end.sh input.fasta output
-```
-
-第一次执行会下载并校验固定版本的 ESM2、ProtBERT、SaProt 和 Foldseek ProstT5 权重，共约 8.7 GiB。默认使用逻辑 GPU 0，可通过环境变量调整：
+可通过环境变量控制 GPU 和批大小：
 
 ```bash
 FRAMO_GPUS=0 \
@@ -326,33 +257,48 @@ ESM2_BATCH_SIZE=32 \
 PROTBERT_BATCH_SIZE=16 \
 SAPROT_BATCH_SIZE=8 \
 PROSTT5_GPU=1 \
-scripts/run_end_to_end.sh input.fasta output
+scripts/run_end_to_end.sh input.fasta results/run_01
 ```
 
-主要输出：
+默认使用以下固定流程：
 
-```text
-output/
-├── features/
-│   ├── esm2/*.npy
-│   ├── protbert/*.npy
-│   └── saprot_prostt5/*.npy
-├── structure_tokens/*.prostt5_3di.tsv
-├── manifest.json
-└── predictions.tsv
+1. ESM2-650M residue mean pooling；
+2. ProtBERT residue mean pooling；
+3. ProstT5 生成 Foldseek 3Di token，SaProt-650M 对配对 token 进行 mean pooling；
+4. 各特征使用对应训练集 scaler 标准化；
+5. 三个 MLP 分别应用自己的交叉验证阈值；
+6. 至少两个模型为阳性时输出 AMP。
+
+### 使用已有 NPY
+
+编辑 `examples/manifest.json`，使每个成员指向相应的 `.npy`、`.metadata.tsv`、checkpoint、配置和 scaler：
+
+```bash
+amp-ensemble \
+  --manifest examples/manifest.json \
+  --strategy majority \
+  --output predictions.tsv
 ```
 
-## 分步生成 NPY
+三份 metadata 的 `seq_id` 和顺序必须完全一致。需要软投票时可使用：
 
-先下载固定版本的基础模型：
+```bash
+amp-ensemble \
+  --manifest examples/manifest.json \
+  --strategy soft \
+  --soft-threshold 0.5 \
+  --output predictions.tsv
+```
+
+### 分步提取特征
+
+先下载固定版本的上游模型：
 
 ```bash
 python scripts/download_backbones.py
 ```
 
-下载目录默认为 `models/backbones/`，已被 `.gitignore` 排除。模型 ID、固定 revision、字节数及原始权重 SHA-256 位于 `configs/backbones.json`。
-
-### 1. ESM2
+ESM2：
 
 ```bash
 python scripts/extract_esm2_embeddings.py input.fasta \
@@ -363,7 +309,7 @@ python scripts/extract_esm2_embeddings.py input.fasta \
   --model-dtype float16 --output-dtype float32
 ```
 
-### 2. ProtBERT
+ProtBERT：
 
 ```bash
 python scripts/extract_protein_lm_embeddings.py input.fasta \
@@ -374,9 +320,7 @@ python scripts/extract_protein_lm_embeddings.py input.fasta \
   --model-dtype float16 --output-dtype float32
 ```
 
-ProtBERT 输入会转换为空格分隔的氨基酸 token；非标准氨基酸会替换为 `X`。
-
-### 3. ProstT5 3Di 与 SaProt
+ProstT5 3Di 与 SaProt：
 
 ```bash
 python scripts/build_saprot_structure_tokens_with_prostt5.py \
@@ -396,39 +340,153 @@ python scripts/extract_protein_lm_embeddings.py input.fasta \
   --model-dtype float16 --output-dtype float32
 ```
 
-三个提取脚本都会写出 `.npy` 与相匹配的 `.metadata.tsv`。metadata 保存 `feature_row`、`seq_id`、清洗后的序列、截断数量等审计信息。
+每个提取器都会生成 `.npy` 和对应的 `.metadata.tsv`。metadata 记录特征行号、序列 ID、清洗后序列、截断数量和来源 FASTA。
 
-## 从已有 NPY 推理
+## ExpFrame 候选优先级筛选
 
-修改 `examples/manifest.json`，使三个成员分别指向 `.npy` 和对应的 `.metadata.tsv`，然后运行：
+ExpFrame 在 AMP-P 之后整合三类可解释证据，为实验验证选择候选：
+
+| 类别 | 判定规则 |
+|---|---|
+| `sequence_similarity` | MMseqs2 E-value `< 1e-3` |
+| `structure_similarity` | 未进入序列类，且 Foldseek TM-score `> 0.5` |
+| `divergent_generation` | 前两类未命中，但 ESM2 CLS 特征接近阳性 AMP embedding 流形 |
+| `not_retained` | 未满足上述证据 |
+
+![ExpFrame workflow](Expframe.png)
+
+原始方法描述见 [Expframe.md](Expframe.md)。
+
+### 准备结构
+
+本仓库不自动下载或运行 ESMFold。请先用 ESMFold 分别预测候选肽和阳性 AMP 参考集的结构，并将 PDB/mmCIF 文件放入两个目录。结构文件 ID 需要与候选 `seq_id` 和参考 FASTA ID 对应。
+
+### 完整运行
 
 ```bash
-amp-ensemble --manifest examples/manifest.json --output predictions.tsv
+python scripts/expframe_filter.py \
+  --predictions-tsv results/generated_amp_screening/predictions.tsv \
+  --positive-reference-fasta data/positive_amp.fasta \
+  --sequence-reference-fasta data/high_confidence_predicted_amp.fasta \
+  --run-mmseqs \
+  --mmseqs-bin mmseqs \
+  --run-foldseek \
+  --foldseek-bin foldseek \
+  --candidate-structure-dir results/esmfold/candidates \
+  --reference-structure-dir results/esmfold/positive_reference \
+  --esm2-model-dir models/backbones/esm2_t33_650M_UR50D \
+  --gpus 0 \
+  --output-dir results/expframe
 ```
 
-三个 metadata 必须包含完全相同且顺序一致的 `seq_id`。默认策略使用各成员独立的交叉验证阈值，再执行 2/3 多数投票。也支持简单软投票：
+如果省略 `--sequence-reference-fasta`，MMseqs2 会使用 `--positive-reference-fasta`。`--esm2-model-dir` 会自动提取 ExpFrame 所需的 leading `[CLS]` 特征；AMP-P 分类使用的 mean pooling 特征不能替代该特征。
+
+embedding 阈值只从阳性参考集估计。默认采用阳性集 reference-to-centroid 距离和 leave-one-out 最近邻距离的第 95 百分位数；候选必须同时满足两个距离阈值。可使用 `--embedding-quantile` 调整分位数。
+
+### 复用已有结果
 
 ```bash
-amp-ensemble --manifest examples/manifest.json \
-  --strategy soft --soft-threshold 0.5 --output predictions.tsv
+python scripts/expframe_filter.py \
+  --predictions-tsv results/generated_amp_screening/predictions.tsv \
+  --positive-reference-fasta data/positive_amp.fasta \
+  --mmseqs-results results/mmseqs_hits.tsv \
+  --foldseek-results results/foldseek_hits.tsv \
+  --candidate-embeddings results/esm2_cls/candidates.npy \
+  --candidate-metadata results/esm2_cls/candidates.metadata.tsv \
+  --reference-embeddings results/esm2_cls/positive_reference.npy \
+  --reference-metadata results/esm2_cls/positive_reference.metadata.tsv \
+  --output-dir results/expframe
 ```
 
-## 模型参数
+仅调试部分模块时可添加 `--allow-partial`。正式筛选建议提供完整的序列、结构和 embedding 证据。
 
-| 成员 | MLP 架构 | Dropout | 参数量 | CV 阈值 |
+最终实验候选位于：
+
+```text
+results/expframe/retained_amp.fasta
+```
+
+每条候选的命中对象、距离、阈值、类别和保留状态记录在 `results/expframe/expframe_results.tsv`。
+
+## 输入与输出
+
+### FASTA 输入
+
+- 推荐使用唯一且不包含空格的首字段作为 `seq_id`；
+- AMP-P 特征提取器会将部分非标准残基转换为 `X`；
+- ExpFrame 仅保留由 20 种标准氨基酸组成的序列；
+- ExpFrame 会按完整氨基酸序列去重，并将处理原因写入 `input_audit.tsv`。
+
+### 端到端预测输出
+
+```text
+OUTPUT_DIR/
+├── features/
+│   ├── esm2/*.npy
+│   ├── protbert/*.npy
+│   └── saprot_prostt5/*.npy
+├── structure_tokens/*.prostt5_3di.tsv
+├── manifest.json
+└── predictions.tsv
+```
+
+`predictions.tsv` 包含每个 MLP 的分数、阈值和二分类结果，以及 `ensemble_score`、`ensemble_prediction` 和 `ensemble_label`。
+
+### ExpFrame 输出
+
+```text
+results/expframe/
+├── expframe_results.tsv
+├── retained_amp.fasta
+├── sequence_similarity.fasta
+├── structure_similarity.fasta
+├── divergent_generation.fasta
+├── input_audit.tsv
+├── summary.tsv
+└── work/
+```
+
+## 模型与可复现性
+
+### 三个 MLP
+
+| 成员 | 架构 | Dropout | 参数量 | 决策阈值 |
 |---|---|---:|---:|---:|
 | ESM2-MLP | 1280 → 512 → 1 | 0.20 | 656,385 | 0.500 |
 | SaProt-ProstT5-MLP | 1280 → 512 → 256 → 128 → 1 | 0.35 | 820,225 | 0.795 |
 | ProtBERT-MLP | 1024 → 512 → 256 → 128 → 1 | 0.50 | 689,153 | 0.850 |
 
-完整参数清单见 `docs/MODELS.md` 和 `models/model_manifest.json`。验证已上传 MLP 参数：
+详细架构、固定上游模型 revision 和文件校验值见：
 
-```bash
-cd models
-sha256sum -c SHA256SUMS
+- [docs/MODELS.md](docs/MODELS.md)
+- [models/model_manifest.json](models/model_manifest.json)
+- [configs/backbones.json](configs/backbones.json)
+- [AMP_generation/model_manifest.json](AMP_generation/model_manifest.json)
+
+为了保持与训练分布一致：
+
+- 三模型分类特征必须使用 `mean` pooling；
+- SaProt 输入必须使用与氨基酸逐位对齐的 ProstT5/Foldseek 3Di token；
+- 不应交换不同模型之间的 scaler；
+- ExpFrame embedding 分支必须使用 ESM2 leading `[CLS]` pooling；
+- 建议保存生成 JSON、特征 metadata、manifest 和完整命令行参数。
+
+## 项目结构
+
+```text
+FRAMO-AMP/
+├── AMP_generation/       # ProGen 配置、Tokenizer、代码和 LFS 权重
+├── configs/              # 生成默认值及固定 backbone 清单
+├── docs/                 # 模型和参数文档
+├── examples/             # NPY 推理 manifest 示例
+├── models/               # 三个 MLP、scaler、配置及校验清单
+├── scripts/              # 生成、特征提取、预测流水线和 ExpFrame 入口
+├── src/amp_ensemble/     # 三模型推理包
+├── src/framo_amp/        # 生成与 ExpFrame 核心实现
+├── tests/                # 单元测试
+├── Expframe.md
+└── Expframe.png
 ```
-
-基础语言模型权重合计约 8.7 GiB，超过 GitHub 单文件 100 MiB 限制，因此不会放入普通 Git 历史；下载脚本使用固定 revision 并校验原始权重哈希，确保输入模型一致。
 
 ## 测试
 
@@ -437,9 +495,51 @@ pip install -e '.[test]'
 python -m unittest discover -s tests -v
 ```
 
-## 注意事项
+从未安装项目的源码目录直接测试时：
 
-- 特征提取必须使用 `mean` pooling；更换 pooling 会使 MLP 输入分布不一致。
-- SaProt 必须使用与序列逐位对齐的 ProstT5/Foldseek 3Di token。
-- checkpoint 只应从可信来源加载；推理代码使用 `weights_only=True`。
-- 本模型用于科研预测，最终候选仍需湿实验验证。
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -v
+```
+
+## 常见问题
+
+### 权重文件只有几百字节
+
+这是 Git LFS 指针尚未展开。执行：
+
+```bash
+git lfs install
+git lfs pull
+```
+
+### CUDA out of memory
+
+减小相应的 batch size。生成使用 `--batch-size`；端到端预测使用 `ESM2_BATCH_SIZE`、`PROTBERT_BATCH_SIZE` 和 `SAPROT_BATCH_SIZE`。
+
+### 找不到 Foldseek 或 MMseqs2
+
+确认命令在 `PATH` 中，或分别通过 `--foldseek-bin`、`--mmseqs-bin` 提供可执行文件路径。
+
+### 三套 NPY 无法集成
+
+检查每个 `.metadata.tsv` 的 `seq_id` 是否完全相同且顺序一致，并确认 pooling、特征维度和 scaler 与对应模型匹配。
+
+### ExpFrame 没有产生 divergent candidates
+
+确认提供的是 ESM2 CLS 特征，而不是分类阶段的 mean-pooled ESM2 特征。检查 `expframe_results.tsv` 中的 centroid 和 nearest-neighbour 距离及阈值。
+
+## 限制与免责声明
+
+- 本框架输出的是计算候选，不代表已验证的抗菌活性；
+- 模型可能受到训练数据组成、序列同源性和物种分布偏差影响；
+- ExpFrame 是优先级排序方法，不是安全性评价模块；
+- 合成前应进一步评估细胞毒性、溶血性、溶解性、稳定性和可制造性；
+- 任何生物医学结论均应由适当的实验和专业人员确认。
+
+## 引用
+
+如果该软件用于研究，请引用本 GitHub 仓库及所使用的具体 commit，并同时引用 ESM2、ProtBERT、SaProt、ProstT5、ProGen、ESMFold、MMseqs2 和 Foldseek 的原始工作。正式论文或 DOI 信息发布后可在此处补充。
+
+## 许可证
+
+本仓库代码采用 [MIT License](LICENSE)。上游模型、数据集和外部工具仍受各自许可证约束；使用或再分发前请分别确认其条款。
